@@ -1,7 +1,7 @@
 import sqlite3
 from config import Config
 import uuid
-
+from datetime import date
 
 DB_PATH = Config.DB_CONFIG["db_path"]
 
@@ -14,11 +14,22 @@ def create_table():
     conn = get_connection()
     cursor = conn.cursor()
 
+    # Create users table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL
+        )
+    """)
+
+    # Create sessions table - FIXED column name from 'created' to 'created_at' for clarity
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT UNIQUE NOT NULL,
+            username TEXT NOT NULL,
+            created_at TEXT NOT NULL
         )
     """)
 
@@ -30,11 +41,10 @@ def create_session(username):
     cursor = conn.cursor()
 
     session_id = str(uuid.uuid4())
-    from datetime import datetime, date
-    today = date.today()
+    today = str(date.today())  # Convert to string for storage
 
     cursor.execute(
-        "INSERT INTO sessions (session, username,created) VALUES (?, ?, ?)",
+        "INSERT INTO sessions (session_id, username, created_at) VALUES (?, ?, ?)",
         (session_id, username, today)
     )
 
@@ -42,6 +52,18 @@ def create_session(username):
     conn.close()
 
     return session_id
+
+def delete_session(session_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute(
+        "DELETE FROM sessions WHERE session_id = ?",
+        (session_id,)
+    )
+    
+    conn.commit()
+    conn.close()
 
 def insert_user(data):
     conn = get_connection()
@@ -56,12 +78,11 @@ def insert_user(data):
         )
 
         conn.commit()
-
         print("Insert SUCCESS", flush=True)
         return True
 
     except Exception as e:
-        print("Insert ERROR:", e, flush=True)   # 🔥 IMPORTANT
+        print("Insert ERROR:", e, flush=True)
         return False
 
     finally:
@@ -116,12 +137,11 @@ def delete_user(username):
     rows_deleted = cursor.rowcount 
     print(rows_deleted)
 
-    if rows_deleted ==  0:
+    if rows_deleted == 0:
         return False
 
     conn.close()
     return True
-
 
 def patch_user_in_db(username, data):
     conn = get_connection()
@@ -153,7 +173,7 @@ def get_session(session_id):
     cursor = conn.cursor()
 
     cursor.execute(
-        "SELECT * FROM sessions WHERE session = ?",
+        "SELECT * FROM sessions WHERE session_id = ?",
         (session_id,)
     )
 
@@ -161,7 +181,9 @@ def get_session(session_id):
     conn.close()
 
     if row:
-        return dict(row)
+        # Convert to dictionary and ensure username is accessible
+        session_dict = dict(row)
+        print(f"Session data retrieved: {session_dict}")  # Debug print
+        return session_dict
 
     return None
-
