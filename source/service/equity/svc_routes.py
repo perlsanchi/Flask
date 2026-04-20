@@ -5,7 +5,7 @@ from flask import Blueprint, request, jsonify, make_response
 from .services import register_user, login_user, update_user, patch_user, delete
 from .models import create_session, get_session, delete_session
 # Ver 1.2 - JWT started
-from .models import verify_jwt_token
+from .models import verify_jwt_token, decode_jwt_token, blacklist_token
 from functools import wraps
 # Ver 1.2 - JWT ended
 
@@ -42,8 +42,8 @@ def token_required(f):
                 "code": "TOKEN_INVALID"
             }), 401
         
-        # Pass username to the route function
-        return f(current_user=username, *args, **kwargs)
+        # Pass username and token to the route function
+        return f(current_user=username, token=token, *args, **kwargs)
     
     return decorated
 # Ver 1.2 - JWT ended
@@ -240,7 +240,7 @@ def profile():
 # Ver 1.2 - JWT started - Protected profile route
 @main.route("/profile")
 @token_required
-def profile(current_user):
+def profile(current_user, token):
     """Protected route that requires JWT token"""
     return jsonify({
         "message": f"Welcome {current_user}",
@@ -251,7 +251,7 @@ def profile(current_user):
 # Ver 1.2 - JWT started - Protected route example
 @main.route("/protected")
 @token_required
-def protected_route(current_user):
+def protected_route(current_user, token):
     """Example of a protected route"""
     return jsonify({
         "message": f"This is protected data for user: {current_user}",
@@ -278,15 +278,33 @@ def logout():
 
     return response """
 
-# Ver 1.2 - JWT started - Logout for JWT (client-side token removal)
+# Ver 1.2 - JWT Blacklist started - Proper logout with token blacklisting
 @main.route("/logout", methods=["POST"])
-def logout():
-    """For JWT, logout is handled client-side by removing the token"""
-    return jsonify({
-        "status": "success",
-        "message": "Logged out successfully - Please remove your token client-side"
-    }), 200
-# Ver 1.2 - JWT ended
+@token_required
+def logout(current_user, token):
+    """Logout by blacklisting the current JWT token"""
+    from datetime import datetime
+    
+    # Decode token to get expiry time
+    payload = decode_jwt_token(token)
+    
+    if payload:
+        expires_at = datetime.fromtimestamp(payload['exp']).isoformat()
+        # Add token to blacklist
+        blacklist_token(token, current_user, expires_at)
+        
+        return jsonify({
+            "status": "success",
+            "message": "Logged out successfully",
+            "user": current_user,
+            "timestamp": datetime.now().isoformat()
+        }), 200
+    else:
+        return jsonify({
+            "status": "error",
+            "message": "Invalid token"
+        }), 400
+# Ver 1.2 - JWT Blacklist ended
 
 @main.route("/user/<username>", methods=["GET"])
 def check_user(username):

@@ -34,6 +34,18 @@ def create_table():
         )
     """)
 
+    # Ver 1.2 - JWT Blacklist started: Create token blacklist table for logout
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS token_blacklist (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            token TEXT UNIQUE NOT NULL,
+            username TEXT NOT NULL,
+            blacklisted_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL
+        )
+    """)
+    # Ver 1.2 - JWT Blacklist ended
+
     conn.commit()
     conn.close()
 
@@ -68,8 +80,68 @@ def decode_jwt_token(token):
     except jwt.InvalidTokenError:
         return None  # Invalid token
 
+# Ver 1.2 - JWT Blacklist started: Functions for token blacklisting
+def blacklist_token(token, username, expires_at):
+    """Add token to blacklist for logout"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    try:
+        from datetime import datetime
+        cursor.execute(
+            "INSERT INTO token_blacklist (token, username, blacklisted_at, expires_at) VALUES (?, ?, ?, ?)",
+            (token, username, datetime.now().isoformat(), expires_at)
+        )
+        conn.commit()
+        print(f"Token blacklisted for user: {username}")
+        return True
+    except Exception as e:
+        print(f"Error blacklisting token: {e}")
+        return False
+    finally:
+        conn.close()
+
+def is_token_blacklisted(token):
+    """Check if token is blacklisted"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute(
+        "SELECT * FROM token_blacklist WHERE token = ?",
+        (token,)
+    )
+    
+    row = cursor.fetchone()
+    conn.close()
+    
+    return row is not None
+
+def cleanup_expired_blacklist():
+    """Remove expired tokens from blacklist (call periodically)"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    from datetime import datetime
+    cursor.execute(
+        "DELETE FROM token_blacklist WHERE expires_at < ?",
+        (datetime.now().isoformat(),)
+    )
+    
+    deleted = cursor.rowcount
+    conn.commit()
+    conn.close()
+    
+    if deleted > 0:
+        print(f"Cleaned up {deleted} expired tokens from blacklist")
+# Ver 1.2 - JWT Blacklist ended
+
 def verify_jwt_token(token):
     """Verify JWT token and return username if valid"""
+    # Ver 1.2 - JWT Blacklist: Check if token is blacklisted first
+    if is_token_blacklisted(token):
+        print("Token is blacklisted (user logged out)")
+        return None
+    
     payload = decode_jwt_token(token)
     if payload:
         return payload.get('username')
