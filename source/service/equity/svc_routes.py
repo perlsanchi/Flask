@@ -1,10 +1,52 @@
 # ver 1 - cookie based login
+# Ver 1.2 - JWT: Changed to JWT-based authentication
 
 from flask import Blueprint, request, jsonify, make_response
 from .services import register_user, login_user, update_user, patch_user, delete
 from .models import create_session, get_session, delete_session
+# Ver 1.2 - JWT started
+from .models import verify_jwt_token
+from functools import wraps
+# Ver 1.2 - JWT ended
 
 main = Blueprint("main", __name__)
+
+# Ver 1.2 - JWT started: Token required decorator
+def token_required(f):
+    """Decorator to protect routes that require JWT token"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = None
+        
+        # Get token from Authorization header
+        auth_header = request.headers.get('Authorization')
+        if auth_header:
+            parts = auth_header.split()
+            if len(parts) == 2 and parts[0].lower() == 'bearer':
+                token = parts[1]
+        
+        if not token:
+            return jsonify({
+                "status": "error",
+                "message": "Token is missing",
+                "code": "TOKEN_MISSING"
+            }), 401
+        
+        # Verify token
+        username = verify_jwt_token(token)
+        
+        if not username:
+            return jsonify({
+                "status": "error",
+                "message": "Token is invalid or expired",
+                "code": "TOKEN_INVALID"
+            }), 401
+        
+        # Pass username to the route function
+        return f(current_user=username, *args, **kwargs)
+    
+    return decorated
+# Ver 1.2 - JWT ended
 
 @main.route("/")
 def home():
@@ -45,12 +87,13 @@ def register():
     # Success
     return jsonify(result), 201
 
+""" ver 1.1 better error handling for incorrect password 
 @main.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "GET":
         return "Login api is working"
 
-    data = request.get_json()
+    data = request.get_json()  #forces json parsing
 
     if not data:
         return jsonify({
@@ -85,8 +128,94 @@ def login():
 
         return response
 
-    return jsonify(result), 200
+    return jsonify(result), 200 """
 
+""" ver 1.1 added """
+""" Ver 1.2 - JWT commented out cookie version
+@main.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "GET":
+        return "Login api is working"
+
+    data = request.get_json()
+
+    if not data:
+        return jsonify({
+            "status": "error",
+            "message": "Invalid JSON"
+        }), 400
+
+    result = login_user(data)
+
+    # Handle different error cases
+    if result["status"] == "error":
+        # Check specific error types for appropriate status codes
+        if result["message"] == "User not found":
+            return jsonify(result), 404
+        elif result["message"] == "Incorrect password":
+            return jsonify(result), 401  # Unauthorized
+        else:
+            return jsonify(result), 400
+
+    # Create session and set cookie for successful login
+    username = data.get("username")
+    if username:
+        session_id = create_session(username)
+
+        response = make_response(jsonify({
+            "status": "success",
+            "message": "Login successful"
+        }), 200)
+
+        response.set_cookie(
+            "session_id",
+            session_id,
+            httponly=True,
+            secure=False,
+            max_age=3600,
+            samesite='Lax'
+        )
+
+        return response
+
+    return jsonify(result), 200 """
+
+# Ver 1.2 - JWT started
+@main.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "GET":
+        return "Login api is working - Use POST with username/password"
+
+    data = request.get_json()
+
+    if not data:
+        return jsonify({
+            "status": "error",
+            "message": "Invalid JSON"
+        }), 400
+
+    result = login_user(data)
+
+    # Handle different error cases
+    if result["status"] == "error":
+        if result["message"] == "User not found":
+            return jsonify(result), 404
+        elif result["message"] == "Incorrect password":
+            return jsonify(result), 401
+        else:
+            return jsonify(result), 400
+
+    # Ver 1.2 - JWT: Return JWT token instead of setting cookie
+    return jsonify({
+        "status": "success",
+        "message": "Login successful",
+        "access_token": result.get("access_token"),
+        "token_type": "Bearer",
+        "username": result.get("username")
+    }), 200
+# Ver 1.2 - JWT ended
+
+""" Ver 1.2 - JWT commented out cookie-based profile
 @main.route("/profile")
 def profile():
     session_id = request.cookies.get("session_id")
@@ -106,8 +235,32 @@ def profile():
         print(f"Session data missing username: {session_data}")  # Debug print
         return jsonify({"message": "Session data corrupted"}), 500
 
-    return jsonify({"message": f"Welcome {username}"})
+    return jsonify({"message": f"Welcome {username}"}) """
 
+# Ver 1.2 - JWT started - Protected profile route
+@main.route("/profile")
+@token_required
+def profile(current_user):
+    """Protected route that requires JWT token"""
+    return jsonify({
+        "message": f"Welcome {current_user}",
+        "user": current_user,
+        "status": "authenticated"
+    }), 200
+
+# Ver 1.2 - JWT started - Protected route example
+@main.route("/protected")
+@token_required
+def protected_route(current_user):
+    """Example of a protected route"""
+    return jsonify({
+        "message": f"This is protected data for user: {current_user}",
+        "user": current_user,
+        "data": "Sensitive information here"
+    }), 200
+# Ver 1.2 - JWT ended
+
+""" Ver 1.2 - JWT commented out cookie-based logout
 @main.route("/logout", methods=["POST"])
 def logout():
     session_id = request.cookies.get("session_id")
@@ -123,7 +276,17 @@ def logout():
     # Delete cookie
     response.delete_cookie("session_id")
 
-    return response
+    return response """
+
+# Ver 1.2 - JWT started - Logout for JWT (client-side token removal)
+@main.route("/logout", methods=["POST"])
+def logout():
+    """For JWT, logout is handled client-side by removing the token"""
+    return jsonify({
+        "status": "success",
+        "message": "Logged out successfully - Please remove your token client-side"
+    }), 200
+# Ver 1.2 - JWT ended
 
 @main.route("/user/<username>", methods=["GET"])
 def check_user(username):
@@ -144,7 +307,7 @@ def update():
     # Create response
     response = make_response(jsonify(result), 200)
 
-    # Add custom header
+    # Add custom header -- we can see this in headers in postman
     response.headers["Custom-Header"] = "UserUpdated"
 
     # Set cookie (example: username)
@@ -163,6 +326,7 @@ def patch(username):
     
     return jsonify(result), 200
 
+""" ver 1.1 commented 
 @main.route("/user/<username>", methods=["DELETE"])
 def delete_user_route(username):
     result = delete(username)
@@ -171,6 +335,45 @@ def delete_user_route(username):
         return jsonify(result), 404
     
     return jsonify(result), 200
+    """
+
+"""ver 1.1 add custom serialization"""
+from datetime import datetime
+from flask import jsonify
+
+class UserResponseSerializer:
+    @staticmethod
+    def serialize_delete_result(result, username, status_code):
+        base_response = {
+            "timestamp": datetime.now().isoformat(),
+            "user": username,
+            "status_code": status_code
+        }
+        
+        if result["status"] == "error":
+            base_response.update({
+                "status": "error",
+                "message": result["message"],
+                "error_code": "DELETE_FAILED"
+            })
+        else:
+            base_response.update({
+                "status": "success",
+                "message": result["message"],
+                "deleted_at": datetime.now().isoformat(),
+                "action": "delete_user"
+            })
+        
+        return jsonify(base_response), status_code
+
+@main.route("/user/<username>", methods=["DELETE"])
+def delete_user_route(username):
+    result = delete(username)
+    
+    if result["status"] == "error":
+        return UserResponseSerializer.serialize_delete_result(result, username, 404)
+    
+    return UserResponseSerializer.serialize_delete_result(result, username, 200)
 
 @main.route("/form-submit", methods=["POST"])
 def form_submit():
