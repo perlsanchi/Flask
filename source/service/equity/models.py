@@ -23,6 +23,7 @@ def create_table():
         )
     """)
 
+    # Ver 1.2 - JWT: Sessions table is optional now, but keeping for backward compatibility
     # Create sessions table - FIXED column name from 'created' to 'created_at' for clarity
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS sessions (
@@ -35,6 +36,45 @@ def create_table():
 
     conn.commit()
     conn.close()
+
+# Ver 1.2 - JWT started
+import jwt
+from datetime import datetime, timedelta
+from flask import current_app
+
+# JWT Configuration
+JWT_SECRET_KEY = "your-super-secret-key-change-this-in-production"  # Move to config.py in production
+JWT_ALGORITHM = "HS256"
+JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=1)
+
+def create_jwt_token(username):
+    """Create JWT token for authenticated user"""
+    payload = {
+        'username': username,
+        'exp': datetime.utcnow() + JWT_ACCESS_TOKEN_EXPIRES,
+        'iat': datetime.utcnow(),
+        'sub': username
+    }
+    token = jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+    return token
+
+def decode_jwt_token(token):
+    """Decode and verify JWT token"""
+    try:
+        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        return payload
+    except jwt.ExpiredSignatureError:
+        return None  # Token expired
+    except jwt.InvalidTokenError:
+        return None  # Invalid token
+
+def verify_jwt_token(token):
+    """Verify JWT token and return username if valid"""
+    payload = decode_jwt_token(token)
+    if payload:
+        return payload.get('username')
+    return None
+# Ver 1.2 - JWT ended
 
 def create_session(username):
     conn = get_connection()
@@ -187,3 +227,27 @@ def get_session(session_id):
         return session_dict
 
     return None
+
+""" ver 1.1 added """
+def log_failed_attempt(username):
+    """Optional: Track failed login attempts"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS login_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT,
+            attempt_time TEXT,
+            success INTEGER
+        )
+    """)
+    
+    from datetime import datetime
+    cursor.execute(
+        "INSERT INTO login_attempts (username, attempt_time, success) VALUES (?, ?, ?)",
+        (username, datetime.now().isoformat(), 0)
+    )
+    
+    conn.commit()
+    conn.close()
